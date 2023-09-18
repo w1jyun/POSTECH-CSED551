@@ -45,8 +45,8 @@ def filterGaussian(image, kernel_size, kernel_sigma, border_type, seperable):
         row, column = getGaussianKernel1D(kernel_sigma, kernel_size)
     else:
         kernel = getGaussianKernel2D(kernel_sigma, kernel_size)
-    s = math.floor(kernel_size/2)
-    expanded_image = cv2.copyMakeBorder(img, s, s, s, s, border_type)
+    padding = math.floor(kernel_size/2)
+    expanded_image = cv2.copyMakeBorder(img, padding, padding, padding, padding, border_type)
     output_image = np.zeros_like(img)
     for i in range(width):
         for j in range(height):
