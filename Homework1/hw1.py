@@ -23,6 +23,8 @@ def getGaussianKernel1D(sigma, kernel_size):
     row = np.zeros((1, kernel_size))
     for i in range(kernel_size):
         row[0][i] = pow(getGaussianKernelValue(sigma, -math.floor(kernel_size/2) + i, -math.floor(kernel_size/2) + i), 1/2)
+    alpha = 1 / sum(sum(row))
+    row = alpha * row
     column = row.transpose()
     return row, column
 
@@ -32,7 +34,8 @@ def getGaussianKernel2D(sigma, kernel_size):
     for i in range(kernel_size):
         for j in range(kernel_size):
             kernel[i][j] = getGaussianKernelValue(sigma, -mid + i, -mid + j)
-    return kernel
+    alpha = 1 / sum(sum(kernel))
+    return alpha * kernel
 
 def filterGaussian(image, kernel_size, kernel_sigma, border_type, seperable):
     img = cv2.imread('images/input/'+image, cv2.IMREAD_COLOR)
@@ -48,19 +51,27 @@ def filterGaussian(image, kernel_size, kernel_sigma, border_type, seperable):
     for i in range(width):
         for j in range(height):
             sub_image = expanded_image[i:i+kernel_size, j:j+kernel_size].transpose()
-            result = (sub_image * column * row) if seperable else (sub_image * kernel)
-            output_image[i][j] = np.array([np.sum(result[0]), np.sum(result[1]), np.sum(result[2])])
+            sub_image_b, sub_image_r, sub_image_g = sub_image[0].transpose(), sub_image[1].transpose(), sub_image[2].transpose()
+            result_b = sum(sum(sub_image_b * column * row if seperable else sub_image_b * kernel))
+            result_r = sum(sum(sub_image_r * column * row if seperable else sub_image_r * kernel))
+            result_g = sum(sum(sub_image_g * column * row if seperable else sub_image_g * kernel))
+            output_image[i][j] = np.array([result_b, result_r, result_g])
+    blur = cv2.GaussianBlur(img, (kernel_size, kernel_size), sigmaX = kernel_sigma, sigmaY = kernel_sigma, borderType = border_type)
+    print(blur == output_image)
 
-    cv2.imwrite('images/output/gaussian/' + image.split('.')[0] + '_%d_%.1f_%d_expand.jpg' % (kernel_size, kernel_sigma, border_type), expanded_image)
+    # # km = np.multiply(kernel, 255)
+    # # for k in km: k = [k,k,k]
+    # cv2.imwrite('images/output/gaussian/kernel_%d_%.1f.jpg' % (kernel_size, kernel_sigma), np.multiply(kernel, 255))
+    # # cv2.imwrite('images/output/gaussian/' + image.split('.')[0] + '_%d_%.1f_%d_expand.jpg' % (kernel_size, kernel_sigma, border_type), expanded_image)
     cv2.imwrite('images/output/gaussian/' + image.split('.')[0] + '_%d_%.1f_%d_result.jpg' % (kernel_size, kernel_sigma, border_type), output_image)
     return output_image
 
-for i in range(2,3):
+for i in range(4,6):
     for size in [3, 33, 99]:
-       for sigma in [1, 2, 3]:
-            # t = 1
-            for t in range(5):
-                filterGaussian('shape%d.jpg'%i, size, sigma, t, True)
+       for sigma in [1.0, 2.0, 3.0]:
+            t = 1
+            # for t in range(5):
+            filterGaussian('color%d.jpg'%i, size, sigma, t, False)
 
 # problem 2: HISTOGRAM EQUALIZATION
 # implement two versions of histogram equalization: grayscale-version, color-version.
