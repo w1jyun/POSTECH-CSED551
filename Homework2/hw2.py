@@ -50,19 +50,40 @@ def idealLowpassFiltering(image, filter_size, radius, border_type):
     for i, c in enumerate([b, g, r]):
         img_f = np.fft.fft2(c)
         img_flt_f = flt_f * img_f 
-        cv2.imwrite('images/output/ilf/' + image.split('.')[0] + '_img_spec_%d_%d_%.1f_%d_result.jpg' % (i, filter_size, radius, border_type), np.log(np.abs(np.fft.fftshift(img_f)))* 255)
+        plt.imsave('images/output/ilf/' + image.split('.')[0] + '_img_spec_%d_%d_%.1f_%d_result.jpg' % (i, filter_size, radius, border_type), np.log(np.abs(np.fft.fftshift(img_f))), cmap = 'gray')
+        # plt.imshow(np.fft.fftshift(np.log(np.abs(img_f))), cmap = 'gray')
+        plt.close()
+
         img_flt = np.real(np.fft.ifft2(img_flt_f))
-        cv2.imwrite('images/output/ilf/'+ image.split('.')[0] + '_img_spec_res_%d_%d_%.1f_%d_result.jpg' % (i, filter_size, radius, border_type), np.log(np.abs(np.fft.fftshift(img_flt_f)))* 255)
+        plt.imsave('images/output/ilf/'+ image.split('.')[0] + '_img_spec_res_%d_%d_%.1f_%d_result.jpg' % (i, filter_size, radius, border_type), np.fft.fftshift(np.log(np.abs(img_flt_f))), cmap = 'gray')
+        plt.close()
         img_flt = cv2.normalize(img_flt, None, np.min(c) * 255, np.max(c) * 255, cv2.NORM_MINMAX, -1)
         spectrum_f = np.log(np.abs(img_flt_f))
         results.append(img_flt)
     
     result_image = cv2.merge((results[0],results[1],results[2]))
     output = result_image[padding:-padding, padding:-padding, :]
+    b, g, r = cv2.split(output)  
+    for i, c in enumerate([b, g, r]):
+            img_f = np.fft.fft2(c)
+            plt.imsave('images/output/ilf/' + image.split('.')[0] + '_output_spec_%d_%d_%.1f_%d_result.jpg' % (i, filter_size, radius, border_type), np.fft.fftshift(np.log(np.abs(img_f))), cmap = 'gray')
+            plt.close()
+
+
     cv2.imwrite('images/output/ilf/' + image.split('.')[0] + '_%d_%.1f_%d_result.jpg' % (filter_size, radius, border_type), output)
     return output
 
 # problem 2: GAUSSIAN LOWPASS FILTER
+
+def gauss(n,sigma):
+    r = np.arange(0, n, dtype=np.float32) - (n-1.)/2.
+    r = np.exp(-r**2./(2.*sigma**2))
+    return r / np.sum(r)
+
+def gauss2d(shape, sigma):
+    g1 = gauss(shape[0], sigma).reshape([shape[0], 1])
+    g2 = gauss(shape[1], sigma).reshape([1, shape[1]])
+    return np.matmul(g1,g2)
 
 def getGaussianKernelValue(sigma, i, j):
     squared_sigma = pow(sigma, 2)
@@ -83,17 +104,19 @@ def gaussianFilteringFFT(image, filter_size, sigma, border_type):
     expanded_image = cv2.copyMakeBorder(img, padding, padding, padding, padding, border_type)
     b, g, r = cv2.split(expanded_image)  
 
-    flt = getGaussianKernel2D(sigma, filter_size)
+    flt = gauss2d((padding, padding), sigma)
     flt_f = psf2otf(flt, (expanded_image.shape[0], expanded_image.shape[1]))
     spectrum_f = np.log(np.abs(flt_f))
+    cv2.imwrite('images/output/gaussian/'+ image.split('.')[0] + '_filter_freq_%d_%.1f_%d_result.jpg' % (filter_size, sigma, border_type), np.fft.fftshift(spectrum_f))
     plt.imshow(np.fft.fftshift(spectrum_f), cmap = 'gray')
     plt.show()
     results = []
-
-    for c in [b, g, r]:
+    for i, c in enumerate([b, g, r]):
         img_f = np.fft.fft2(c)
         img_flt_f = flt_f * img_f 
+        cv2.imwrite('images/output/gaussian/' + image.split('.')[0] + '_img_spec_%d_%d_%.1f_%d_result.jpg' % (i, filter_size, sigma, border_type), np.log(np.abs(np.fft.fftshift(img_f)))* 255)
         img_flt = np.real(np.fft.ifft2(img_flt_f))
+        cv2.imwrite('images/output/gaussian/'+ image.split('.')[0] + '_img_spec_res_%d_%d_%.1f_%d_result.jpg' % (i, filter_size, sigma, border_type), np.log(np.abs(np.fft.fftshift(img_flt_f)))* 255)
         img_flt = cv2.normalize(img_flt, None, np.min(c) * 255, np.max(c) * 255, cv2.NORM_MINMAX, -1)
         results.append(img_flt)
 
@@ -162,7 +185,14 @@ def unsharpMasking(image, alpha, sigma, domain):
 
     cv2.imwrite('images/output/unsharp/'+ domain + '/' + image.split('.')[0] + '_%d_%.1f_%d_result.jpg' % (filter_size, sigma, border_type), output_image)
 
-idealLowpassFiltering('shape3.jpg', 200, 10, 1)
+# for img in ['color3.jpg', 'shape2.jpg']:
+#     for s in [1, 2, 3]:
+#         gaussianFilteringFFT(img, 33, s, 1)
+
+for img in ['color3.jpg', 'shape2.jpg']:
+    for r in [10, 20, 50]:
+        idealLowpassFiltering(img, 200, r, 1)
+
 # gaussianFilteringFFT('color2.jpg', 99, 1, 1)
 # gaussianFilteringFFT('color2.jpg', 99, 3, 1)
 # unsharpMasking('color3.jpg', 10, 1, 'frequency')
