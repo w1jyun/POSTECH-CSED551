@@ -36,41 +36,25 @@ def idealLowpassFiltering(image, filter_size, radius, border_type):
     padding = math.floor(filter_size / 2)
     expanded_image = cv2.copyMakeBorder(img, padding, padding, padding, padding, border_type)
     b, g, r = cv2.split(expanded_image)  
-    print(b*255, g*255, r*255)
-
 
     flt = ilf(filter_size, radius)
-    plt.imsave('images/output/ilf/'+ image.split('.')[0] + '_filter_r_%d_%.1f_%d_result.jpg' % (filter_size, radius, border_type), flt, cmap = 'gray')
     flt_f = psf2otf(flt, (expanded_image.shape[0], expanded_image.shape[1]))
-    spectrum_f = np.log(np.abs(flt_f))
-    plt.imsave('images/output/ilf/'+ image.split('.')[0] + '_filter_freq_%d_%.1f_%d_result.jpg' % (filter_size, radius, border_type), np.fft.fftshift(spectrum_f), cmap = 'gray')
 
     results = []
 
-    for i, c in enumerate([b, g, r]):
+    for c in [b, g, r]:
         img_f = np.fft.fft2(c)
         img_flt_f = flt_f * img_f 
-        plt.imsave('images/output/ilf/' + image.split('.')[0] + '_img_spec_%d_%d_%.1f_%d_result.jpg' % (i, filter_size, radius, border_type), np.log(np.abs(np.fft.fftshift(img_f))), cmap = 'gray')
-        # plt.imshow(np.fft.fftshift(np.log(np.abs(img_f))), cmap = 'gray')
-        plt.close()
 
         img_flt = np.real(np.fft.ifft2(img_flt_f))
-        plt.imsave('images/output/ilf/'+ image.split('.')[0] + '_img_spec_res_%d_%d_%.1f_%d_result.jpg' % (i, filter_size, radius, border_type), np.fft.fftshift(np.log(np.abs(img_flt_f))), cmap = 'gray')
-        plt.close()
         img_flt = cv2.normalize(img_flt, None, np.min(c) * 255, np.max(c) * 255, cv2.NORM_MINMAX, -1)
-        spectrum_f = np.log(np.abs(img_flt_f))
         results.append(img_flt)
     
     result_image = cv2.merge((results[0],results[1],results[2]))
     output = result_image[padding:-padding, padding:-padding, :]
     b, g, r = cv2.split(output)  
-    for i, c in enumerate([b, g, r]):
-            img_f = np.fft.fft2(c)
-            plt.imsave('images/output/ilf/' + image.split('.')[0] + '_output_spec_%d_%d_%.1f_%d_result.jpg' % (i, filter_size, radius, border_type), np.fft.fftshift(np.log(np.abs(img_f))), cmap = 'gray')
-            plt.close()
 
-
-    cv2.imwrite('images/output/ilf/' + image.split('.')[0] + '_%d_%.1f_%d_result.jpg' % (filter_size, radius, border_type), output)
+    cv2.imwrite('images/output/ideal/' + image.split('.')[0] + '_%d_%.1f_%d_result.jpg' % (filter_size, radius, border_type), output)
     return output
 
 # problem 2: GAUSSIAN LOWPASS FILTER
@@ -85,19 +69,6 @@ def gauss2d(shape, sigma):
     g2 = gauss(shape[1], sigma).reshape([1, shape[1]])
     return np.matmul(g1,g2)
 
-def getGaussianKernelValue(sigma, i, j):
-    squared_sigma = pow(sigma, 2)
-    return (1 / (2 * math.pi * squared_sigma)) * math.exp(-(pow(i,2) + pow(j,2)) / (2 * squared_sigma))
-
-def getGaussianKernel2D(sigma, kernel_size):
-    kernel = np.zeros((kernel_size, kernel_size))
-    mid = math.floor(kernel_size/2)
-    for i in range(kernel_size):
-        for j in range(kernel_size):
-            kernel[i][j] = getGaussianKernelValue(sigma, -mid + i, -mid + j)
-    alpha = 1 / sum(sum(kernel))
-    return alpha * kernel
-
 def gaussianFilteringFFT(image, filter_size, border_type):
     img = cv2.imread('images/input/'+image, cv2.IMREAD_COLOR).astype(np.float32) / 255.
     padding = math.floor(filter_size / 2)
@@ -106,100 +77,71 @@ def gaussianFilteringFFT(image, filter_size, border_type):
 
     flt = gauss2d((padding*2+1, padding*2+1), padding / 6.0)
     flt_f = psf2otf(flt, (expanded_image.shape[0], expanded_image.shape[1]))
-    spectrum_f = np.log(np.abs(flt_f))
-    plt.imsave('images/output/gaussian/'+ image.split('.')[0] + '_filter_freq_%d__%d_result.jpg' % (filter_size, border_type), np.fft.fftshift(spectrum_f), cmap = 'gray')
-    plt.close()
+
     results = []
     for i, c in enumerate([b, g, r]):
         img_f = np.fft.fft2(c)
         img_flt_f = flt_f * img_f 
-        plt.imsave('images/output/gaussian/' + image.split('.')[0] + '_img_spec_%d_%d__%d_result.jpg' % (i, filter_size, border_type), np.log(np.abs(np.fft.fftshift(img_f))), cmap = 'gray')
-        plt.close()
         img_flt = np.real(np.fft.ifft2(img_flt_f))
-        plt.imsave('images/output/gaussian/'+ image.split('.')[0] + '_img_spec_res_%d_%d__%d_result.jpg' % (i, filter_size, border_type), np.log(np.abs(np.fft.fftshift(img_flt_f))), cmap = 'gray')
-        plt.close()
         img_flt = cv2.normalize(img_flt, None, np.min(c) * 255, np.max(c) * 255, cv2.NORM_MINMAX, -1)
         results.append(img_flt)
 
     result_image = cv2.merge((results[0],results[1],results[2]))
     output_image = result_image[padding:-padding, padding:-padding, :]
     b, g, r = cv2.split(output_image)  
-    for i, c in enumerate([b, g, r]):
-            img_f = np.fft.fft2(c)
-            plt.imsave('images/output/gaussian/' + image.split('.')[0] + '_output_spec_%d_%d_%d_result.jpg' % (i, filter_size, border_type), np.fft.fftshift(np.log(np.abs(img_f))), cmap = 'gray')
-            plt.close()
     cv2.imwrite('images/output/gaussian/' + image.split('.')[0] + '_%d__%d_result.jpg' % (filter_size, border_type), output_image)
-    return output_image
-
-def gaussianFilteringSpatial(image, filter_size, sigma, border_type):
-    img = cv2.imread('images/input/'+image, cv2.IMREAD_COLOR)
-    width = img.shape[0]
-    height = img.shape[1]
-    flt = getGaussianKernel2D(sigma, filter_size)
-
-    padding = math.floor(filter_size/2)
-    expanded_image = cv2.copyMakeBorder(img, padding, padding, padding, padding, border_type)
-    output_image = np.zeros_like(img)
-    for i in range(width):
-        for j in range(height):
-            sub_image = expanded_image[i:i+filter_size, j:j+filter_size].transpose()
-            sub_image_b, sub_image_r, sub_image_g = sub_image[0].transpose(), sub_image[1].transpose(), sub_image[2].transpose()
-            result_b = sum(sum(sub_image_b * flt))
-            result_r = sum(sum(sub_image_r * flt))
-            result_g = sum(sum(sub_image_g * flt))
-            output_image[i][j] = np.array([result_b, result_r, result_g])
- 
     return output_image
 
 # promblem 3: UNSHARP MASKING & CONVOLUTION THEOREM
 # two versions of unsharp masking:
     # Use spatial domain to implement unsharp masking
     # Use the frequency domain (use FFTs)
-    # You need to implement all operations including convolution, addition, subtraction, and scaling in the frequency domain.
-def unsharpMasking(image, alpha, sigma, domain):
-    # 𝑌 = 𝑋 + 𝛼(𝑋 − 𝐺 ∗ 𝑋)
-    # 𝑋: input image, 𝑌: sharpened result, 𝐺: low-pass filter(Gaussian), α: sharpening strength
-    # size and shape of 𝐺 are controlled by sigma
+def unsharpMasking(image, alpha, filter_size, domain, border_type):
+    # Y = X + a(X-G*X)
+    # X: input image, Y: sharpened result, G: low-pass filter(Gaussian), a: sharpening strength
+    # size and shape of G are controlled by sigma
     img = cv2.imread('images/input/'+image, cv2.IMREAD_COLOR)
-    filter_size = sigma*6
-    border_type = 1
+    padding = math.floor(filter_size / 2)
+    expanded_image = cv2.copyMakeBorder(img, padding, padding, padding, padding, border_type)
+    flt = gauss2d((padding*2+1, padding*2+1), padding / 6.0)
+    results = []
+    output_image = np.zeros_like(img)
     if domain == 'frequency':
-        img = cv2.imread('images/input/'+image, cv2.IMREAD_COLOR).astype(np.float32)
-        padding = math.floor(filter_size / 2)
-        expanded_image = cv2.copyMakeBorder(img, padding, padding, padding, padding, border_type)
-        b, g, r = cv2.split(expanded_image)  
-
-        flt = getGaussianKernel2D(sigma, filter_size)
         flt_f = psf2otf(flt, (expanded_image.shape[0], expanded_image.shape[1]))
-        spectrum_f = np.log(np.abs(flt_f))
-        # plt.imshow(np.fft.fftshift(spectrum_f), cmap = 'gray')
-        # plt.show()
-        results = []
-
+        b, g, r = cv2.split(expanded_image)  
         for c in [b, g, r]:
             img_f = np.fft.fft2(c)
-            spectrum = np.log(np.abs(img_f))
             img_flt_f = img_f + alpha * (img_f - flt_f * img_f)
             img_flt = np.real(np.fft.ifft2(img_flt_f))
             results.append(img_flt)
 
         result_image = cv2.merge((results[0],results[1],results[2]))
         output_image = result_image[padding:-padding, padding:-padding, :]
+        cv2.imwrite('images/output/unsharp/'+ domain + '/' + image.split('.')[0] + '_%d_%d_%d_result.jpg' % (filter_size, alpha, border_type), output_image)
     else:
-        gaussian_result = gaussianFilteringSpatial(image, filter_size, sigma, border_type)
-        output_image = img + alpha * (img - gaussian_result)
+        width = img.shape[0]
+        height = img.shape[1]
+        img_flt = np.zeros_like(img).astype(np.float32) 
+        for i in range(width):
+            for j in range(height):
+                sub_image = expanded_image[i:i+filter_size, j:j+filter_size].astype(np.float32) 
+                b, g, r = cv2.split(sub_image) 
+                for i_c, c in enumerate([b, g, r]):
+                    img_flt[i][j][i_c] = sum(sum(flt * c))
 
-    cv2.imwrite('images/output/unsharp/'+ domain + '/' + image.split('.')[0] + '_%d_%.1f_%d_result.jpg' % (filter_size, sigma, border_type), output_image)
+        output_image = img + alpha * (img - img_flt)
+        cv2.imwrite('images/output/unsharp/'+ domain + '/' + image.split('.')[0] + '_%d_%d_%d_result.jpg' % (filter_size, alpha, border_type), output_image)
+    
+    return output_image
 
-for img in ['color3.jpg', 'shape2.jpg']:
-    for s in [33, 77, 99]:
-        gaussianFilteringFFT(img, s, 1)
+for img in ['color3.jpg','color8.jpg','shape.jpg']:
+    for size in [10, 30, 50]:
+        idealLowpassFiltering(img, size * 3, size, 1)
 
-# for img in ['color3.jpg', 'shape2.jpg']:
-#     for r in [10, 20, 50]:
-#         idealLowpassFiltering(img, 200, r, 1)
+    for filer in [33,77,99]:
+        gaussianFilteringFFT(img, filer, 1)
 
-# gaussianFilteringFFT('color2.jpg', 99, 1, 1)
-# gaussianFilteringFFT('color2.jpg', 99, 3, 1)
-# unsharpMasking('color3.jpg', 10, 1, 'frequency')
-# unsharpMasking('color3.jpg', 10, 1, 'gaussian')
+    for domain in ['frequency', 'spatial']:
+        for alpha in [1.0, 2.0, 3.0]:
+            for filter_size in  [33,77,99]:
+                unsharpMasking(img, alpha, filter_size, domain, 1)
