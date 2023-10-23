@@ -32,7 +32,7 @@ def RANSAC(pairs, threshold):
     # find largest inlier pair set
     inliers = []
     min_val = float('inf')
-    for _ in range(len(pairs)):
+    for _ in range(len(pairs) * 4):
         pair_set = [pairs[random.randint(0, len(pairs)-1)] for _ in range(4)]
         inliers_tmp = []
         H = homography(pair_set)
@@ -43,11 +43,13 @@ def RANSAC(pairs, threshold):
             min_val = min(SSD(dst_v, H @ src_v), min_val)
             if SSD(dst_v, H @ src_v) < threshold:
                 inliers_tmp.append(H)
+
         if len(inliers_tmp) > len(inliers):
             inliers = copy.deepcopy(inliers_tmp)
+        if len(inliers) == 4: break
 
     print('min_val', min_val)
-
+    print(len(inliers))
     if len(inliers) == 0:
         return None
     # calculate average H
@@ -93,15 +95,11 @@ def panorama(folder_path):
     images = []
     files = os.listdir(folder_path)
     files.sort()
-    print(files)
     for file in files:
         images.append(cv2.imread(folder_path + file, cv2.IMREAD_COLOR))
-        
-    # 1. Given N input images, set one image as a reference
     # reference = images[0]
     # keypoints = []
     # descriptors = []
-    # # 2. Detect feature points from images and correspondences between pairs of images
     # for img in images:
     #     gray= cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
     #     sift = cv2.SIFT_create()
@@ -112,73 +110,56 @@ def panorama(folder_path):
     #     # cv2.imwrite('sift_keypoints.jpg',img)
     #     # break
 
-    total_H = np.identity(3)
+    ref_img = images[0] # queryImage
     for i in range(len(images)-1):
-          j = i+1
-          # Feature matching
-          target_image = images[i] # queryImage
-          target_kp, target_des = featureExtract(target_image)
-          ref_image = images[j] # trainImage
-          ref_kp, ref_des = featureExtract(ref_image)
-          height, width, _ = ref_image.shape
-          pairs = []
-          matcher = cv2.BFMatcher(cv2.NORM_L1, crossCheck=True)
-          matches = matcher.match(ref_des, target_des)
-          matches = sorted(matches, key = lambda x:x.distance)
+        j = i+1
+        # Feature matching
+        # 1. Given N input images, set one image as a reference
+        targ_img = images[j] # trainImage
+
+        # 2. Detect feature points from images and correspondences between pairs of images
+        ref_kp, ref_des = featureExtract(ref_img)
+        targ_kp, targ_des = featureExtract(targ_img)
+        height, width, _ = targ_img.shape
+
+        pairs = []
+        matcher = cv2.BFMatcher(cv2.NORM_L1, crossCheck=True)
+        matches = matcher.match(targ_des, ref_des)
+        matches = sorted(matches, key = lambda x:x.distance)
         #   res = cv2.drawMatches(ref_image, ref_kp, target_image,target_kp, matches[:500], None)
         #   cv2.imwrite('matching_%d_%d.jpg'%(i,j), res)
-
-          for match in matches:
-              idx_i = match.queryIdx
-              idx_j = match.trainIdx
-              pairs.append((ref_kp[idx_i].pt, target_kp[idx_j].pt))
-          # 3. Estimate the homographies between images using RANSAC
-          H = RANSAC(pairs, 50)
-          if H is None: continue
-          total_H = H @ total_H
-          # 4. Warp the images to the reference image
-          warped_img = np.zeros((width * 2, height * 2, 3))
-
-        #   for y in range(height * 2):
-        #       for x in range(width * 2):
-        #           position = np.array([[x, y, 1]]).transpose()
-        #           origin_position = np.squeeze(np.linalg.inv(H) @ position)
-        #           origin_x = int(origin_position[0] / origin_position[2])
-        #           origin_y = int(origin_position[1] / origin_position[2])
-        #           if not (origin_x < 0 or origin_x >= width or origin_y < 0 or origin_y >= height):
-        #               _y = y + offset_h
-        #               _x = x + offset_w
-        #               warped_img[_y][_x] = ref_image[origin_y][origin_x]
         
-          # for y in range(height):
-          #     for x in range(width):
-          #         position = np.array([[x, y, 1]]).transpose()
-          #         new_position = np.squeeze(H @ position)
-          #         new_x = (new_position[0] / new_position[2])
-          #         new_x = int(new_x) + offset_w
-          #         new_y = (new_position[1] / new_position[2])
-          #         new_y = int(new_y) + offset_h
-          #         if not (new_x < 0 or new_x >= width * 2 or new_y < 0 or new_y >= height * 2):
-          #             warped_img[new_y][new_x] = ref_image[y][x]
-
-          warped_img = cv2.warpPerspective(ref_image, H, (width * 2, height), cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-          cv2.imwrite('warped_img_%d_%d.jpg'%(i,j),warped_img)
-
-          # 5. Composite them
-          expanded_image = cv2.copyMakeBorder(target_image, 0, 0, 0, width, cv2.BORDER_CONSTANT)
-          composed_img = compose(warped_img, expanded_image)
-          
-          im_mask_zero = np.zeros_like(target_image)
-          im_mask_one = np.full_like(target_image, 255)
-          im_mask = np.hstack([im_mask_one, im_mask_zero])
-          center = (target_image.shape[1]//2, target_image.shape[0]//2)
-
-          im_clone = cv2.seamlessClone(expanded_image, warped_img, im_mask, center, cv2.MIXED_CLONE)
-
-          cv2.imwrite('ref_img.jpg',images[i])
-          cv2.imwrite('target_img.jpg',images[j])
-          cv2.imwrite('composed_img_%d_%d.jpg'%(i,j),composed_img)
-          cv2.imwrite('im_clone%d_%d.jpg'%(i,j),im_clone)
-
+        for match in matches:
+            idx_i = match.queryIdx
+            idx_j = match.trainIdx
+            pairs.append((targ_kp[idx_i].pt, ref_kp[idx_j].pt))
+        
+        # 3. Estimate the homographies between images using RANSAC
+        H = RANSAC(pairs, 300)
+        if H is None: continue
+        
+        # 4. Warp the images to the reference image
+        warped_img = cv2.warpPerspective(targ_img, H, (width * len(images), height), cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        cv2.imwrite('warped_img_%d_%d.jpg'%(i,j),warped_img)
+        
+        # 5. Composite them
+        expanded_image = cv2.copyMakeBorder(ref_img, 0, 0, 0, width * (len(images) - 1), cv2.BORDER_CONSTANT)
+        composed_img = compose(warped_img, expanded_image)
+        
+        im_mask_zero = np.zeros_like(ref_img)
+        im_mask_one = np.full_like(ref_img, 255)
+        im_mask = np.hstack([im_mask_one, im_mask_zero])
+        center = (ref_img.shape[1]//2, ref_img.shape[0]//2)
+        im_clone = cv2.seamlessClone(expanded_image, warped_img, im_mask, center, cv2.MIXED_CLONE)
+        
+        cv2.imwrite('ref_img.jpg',images[i])
+        cv2.imwrite('target_img.jpg',images[j])
+        cv2.imwrite('composed_img_%d_%d.jpg'%(i,j),composed_img)
+        cv2.imwrite('im_clone%d_%d.jpg'%(i,j),im_clone)
+        
+        ref_img = composed_img
+        
+    cv2.imwrite('../images/output/2_composed_img%d.jpg'%random.randint(0,100),ref_img)
 
 panorama('../images/input/2/')
+panorama('../images/input/4/')
