@@ -31,7 +31,6 @@ def RANSAC(pairs, threshold):
     # pair_ref = pairs[random.randint(0, len(pairs)-1)]
     # find largest inlier pair set
     inliers = []
-    min_val = float('inf')
     for _ in range(len(pairs) * 100):
         pair_set = [pairs[random.randint(0, len(pairs)-1)] for _ in range(4)]
         inliers_tmp = []
@@ -40,7 +39,6 @@ def RANSAC(pairs, threshold):
             src, dst = pair
             src_v = np.array([src[0], src[1], 1])
             dst_v = np.array([dst[0], dst[1], 1])
-            min_val = min(SSD(dst_v, H @ src_v), min_val)
             if SSD(dst_v, H @ src_v) < threshold:
                 inliers_tmp.append(H)
 
@@ -48,8 +46,7 @@ def RANSAC(pairs, threshold):
             inliers = copy.deepcopy(inliers_tmp)
         if len(inliers) == 4: break
 
-    print('min_val', min_val)
-    print(len(inliers))
+    print('inliers', len(inliers))
     if len(inliers) == 0:
         return None
     # calculate average H
@@ -65,26 +62,55 @@ def featureExtract(img):
     kp, des = sift.detectAndCompute(gray,None)
     return kp, des
 
-def compose(warped, target, scaleFactor):
-    composed_img = np.zeros_like(warped)
-    height, width, _ = warped.shape
+def compose(warped, target, scaleFactor, dir):
+    composed_img = target.copy()
+    height, width, _ = target.shape
+
+    # find edge
     edge_w = []
-    for y in range(height):
-        for x in range(width):
-            if sum(warped[y][x]) != 0:
-                edge_w.append(x)
-                break
-            if x == width - 1: edge_w.append(x)
-
-
     edge_t = []
-    for y in range(height):
-        for x in range(width):
-            if sum(target[y][x]) == 0:
-                edge_t.append(x)
-                break
-            if x == width - 1: edge_t.append(x)
 
+    w_mid = width // 2
+    if dir == 1:
+        # warped image, left edge
+        for y in range(height):
+            for x in range(width):
+                is_edge = (sum(warped[y][x]) != 0)
+                if is_edge:
+                    edge_w.append(x)
+                    break
+                if x == width - 1: edge_w.append(x)
+
+        # target image, right edge
+        for y in range(height):
+            for x in range(w_mid, width):
+                is_edge = (sum(target[y][x]) == 0)
+                if is_edge:
+                    edge_t.append(x)
+                    break
+                if x == width - 1: edge_t.append(x)
+    else:
+        # warped image, right edge
+        for y in range(height):
+            cnt = 0
+            for x in range(width):
+                is_black = (sum(warped[y][x]) == 0)
+                if cnt == 0 and not is_black:
+                    cnt += 1
+                if cnt == 1 and is_black:
+                    edge_w.append(x)
+                    break
+                if x == width - 1: edge_w.append(x)
+
+        # target image, left edge
+        for y in range(height):
+            for x in range(w_mid):
+                is_edge = (sum(target[y][x]) == 0)
+                if is_edge:
+                    edge_t.append(x)
+                    break
+                if x == width - 1: edge_t.append(x)
+            
     for y in range(height):
         for x in range(width):
             if sum(warped[y][x]) != 0 and sum(target[y][x]) != 0:
@@ -109,58 +135,49 @@ def panorama(folder_path):
     files = os.listdir(folder_path)
     files.sort()
     for i, file in enumerate(files):
-        if i == 0: continue
         images.append(cv2.imread(folder_path + file, cv2.IMREAD_COLOR))
-    # reference = images[0]
-    # keypoints = []
-    # descriptors = []
-    # for img in images:
-    #     gray= cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
-    #     sift = cv2.SIFT_create()
-    #     kp, des = sift.detectAndCompute(gray,None)
-    #     keypoints.append((kp))
-    #     descriptors.append((des))
-    #     # img=cv2.drawKeypoints(gray,kp,img)
-    #     # cv2.imwrite('sift_keypoints.jpg',img)
-    #     # break
 
-    target_image = images[0] # queryImage
+    mid = math.ceil(len(files) / 2)
+    target_image = images[mid] # queryImage
     height, width, _ = target_image.shape
-    target_image = cv2.copyMakeBorder(target_image, height, height, width, width, cv2.BORDER_CONSTANT)
+    pad_h = height // 4
+    pad_w = (len(files) * width) // 3
+    target_image = cv2.copyMakeBorder(target_image, pad_h, pad_h, pad_w, pad_w, cv2.BORDER_CONSTANT)
 
-    for j in range(1, len(images)):
-        # Feature matching
-        # 1. Given N input images, set one image as a reference
-        ref_image = images[j] # trainImage
+    for i in range(1, mid+1):
+        for j in [-1, 1]:
+            idx = mid + i * j
+            if idx < 0 or idx >= len(files): continue
+            # Feature matching
+            # 1. Given N input images, set one image as a reference
+            ref_image = images[idx] # trainImage
 
-        # 2. Detect feature points from images and correspondences between pairs of images
-        target_kp, target_des = featureExtract(target_image)
-        ref_kp, ref_des = featureExtract(ref_image)
+            # 2. Detect feature points from images and correspondences between pairs of images
+            target_kp, target_des = featureExtract(target_image)
+            ref_kp, ref_des = featureExtract(ref_image)
 
-        pairs = []
-        matcher = cv2.BFMatcher(cv2.NORM_L1, crossCheck=True)
-        matches = matcher.match(ref_des, target_des)
-        matches = sorted(matches, key = lambda x:x.distance)
-        
-        for match in matches:
-            idx_i = match.queryIdx
-            idx_j = match.trainIdx
-            pairs.append((ref_kp[idx_i].pt, target_kp[idx_j].pt))
-        
-        # 3. Estimate the homographies between images using RANSAC
-        H = RANSAC(pairs, 100)
-        if H is None: continue
-        
-        # 4. Warp the images to the reference image
-        warped_img = cv2.warpPerspective(ref_image, H, (target_image.shape[1], target_image.shape[0]), cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+            pairs = []
+            matcher = cv2.BFMatcher(cv2.NORM_L1, crossCheck=True)
+            matches = matcher.match(ref_des, target_des)
+            matches = sorted(matches, key = lambda x:x.distance)
+            
+            for match in matches:
+                idx_i = match.queryIdx
+                idx_j = match.trainIdx
+                pairs.append((ref_kp[idx_i].pt, target_kp[idx_j].pt))
+            
+            # 3. Estimate the homographies between images using RANSAC
+            H = RANSAC(pairs, 100)
+            if H is None: continue
 
-        cv2.imwrite('warped_img_%d_%d.jpg'%(i,j),warped_img)
-        # 5. Composite them
-        composed_img = compose(warped_img, target_image, 30)
-        
-        cv2.imwrite('composed_img_%d.jpg'%j,composed_img)
-        target_image = composed_img
-        cv2.imwrite('../images/output/1_1_composed_img.jpg',composed_img)
+            # 4. Warp the images to the reference image
+            warped_img = cv2.warpPerspective(ref_image, H, (target_image.shape[1], target_image.shape[0]), cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
 
+            # 5. Composite them
+            composed_img = compose(warped_img, target_image, width / 50, j)
+            
+            cv2.imwrite('composed_img_%d.jpg'%i,composed_img)
+            target_image = composed_img
+            cv2.imwrite('../images/output/2_1_composed_img.jpg',composed_img)
 
-panorama('../images/input/1/')
+panorama('../images/input/2/')
