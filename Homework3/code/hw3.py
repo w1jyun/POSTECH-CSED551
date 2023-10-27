@@ -32,7 +32,7 @@ def RANSAC(pairs, threshold):
     # find largest inlier pair set
     inliers = []
     min_val = float('inf')
-    for _ in range(len(pairs) * 4):
+    for _ in range(len(pairs) * 100):
         pair_set = [pairs[random.randint(0, len(pairs)-1)] for _ in range(4)]
         inliers_tmp = []
         H = homography(pair_set)
@@ -65,23 +65,36 @@ def featureExtract(img):
     kp, des = sift.detectAndCompute(gray,None)
     return kp, des
 
-def compose(warped, target):
+def compose(warped, target, scaleFactor):
     composed_img = np.zeros_like(warped)
     height, width, _ = warped.shape
-    minX = float('inf')
-    minValues = []
+    edge_w = []
     for y in range(height):
         for x in range(width):
             if sum(warped[y][x]) != 0:
-                minX = min(x, minX)
-        minValues.append(minX)
+                edge_w.append(x)
+                break
+            if x == width - 1: edge_w.append(x)
+
+
+    edge_t = []
+    for y in range(height):
+        for x in range(width):
+            if sum(target[y][x]) == 0:
+                edge_t.append(x)
+                break
+            if x == width - 1: edge_t.append(x)
 
     for y in range(height):
         for x in range(width):
             if sum(warped[y][x]) != 0 and sum(target[y][x]) != 0:
                 b_a, g_a, r_a = warped[y][x].astype('int')
                 b_b, g_b, r_b = target[y][x].astype('int')
-                p = (abs(minValues[y] - x)) / (abs(minValues[y] - x) + abs(width // 2 - x))
+                diff1 = abs(edge_w[y] - x)
+                diff2 = abs(edge_t[y] - x)
+
+                p = (diff1 / (diff1 + diff2)) * scaleFactor
+                p = min(max(p, 0), 1)
                 b = b_a * p + b_b * (1-p)
                 g = g_a * p + g_b * (1-p)
                 r = r_a * p + r_b * (1-p)
@@ -95,7 +108,8 @@ def panorama(folder_path):
     images = []
     files = os.listdir(folder_path)
     files.sort()
-    for file in files:
+    for i, file in enumerate(files):
+        if i == 0: continue
         images.append(cv2.imread(folder_path + file, cv2.IMREAD_COLOR))
     # reference = images[0]
     # keypoints = []
@@ -110,21 +124,20 @@ def panorama(folder_path):
     #     # cv2.imwrite('sift_keypoints.jpg',img)
     #     # break
 
-    ref_img = images[0] # queryImage
-    for i in range(len(images)-1):
-        j = i+1
+    target_image = images[0] # queryImage
+    for j in range(1, len(images)):
         # Feature matching
         # 1. Given N input images, set one image as a reference
-        targ_img = images[j] # trainImage
+        ref_image = images[j] # trainImage
 
         # 2. Detect feature points from images and correspondences between pairs of images
-        ref_kp, ref_des = featureExtract(ref_img)
-        targ_kp, targ_des = featureExtract(targ_img)
-        height, width, _ = targ_img.shape
+        target_kp, target_des = featureExtract(target_image)
+        ref_kp, ref_des = featureExtract(ref_image)
+        height, width, _ = ref_image.shape
 
         pairs = []
         matcher = cv2.BFMatcher(cv2.NORM_L1, crossCheck=True)
-        matches = matcher.match(targ_des, ref_des)
+        matches = matcher.match(ref_des, target_des)
         matches = sorted(matches, key = lambda x:x.distance)
         #   res = cv2.drawMatches(ref_image, ref_kp, target_image,target_kp, matches[:500], None)
         #   cv2.imwrite('matching_%d_%d.jpg'%(i,j), res)
@@ -132,34 +145,47 @@ def panorama(folder_path):
         for match in matches:
             idx_i = match.queryIdx
             idx_j = match.trainIdx
-            pairs.append((targ_kp[idx_i].pt, ref_kp[idx_j].pt))
+            pairs.append((ref_kp[idx_i].pt, target_kp[idx_j].pt))
         
         # 3. Estimate the homographies between images using RANSAC
-        H = RANSAC(pairs, 300)
+        H = RANSAC(pairs, 100)
         if H is None: continue
         
         # 4. Warp the images to the reference image
-        warped_img = cv2.warpPerspective(targ_img, H, (width * len(images), height), cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        warped_img = cv2.warpPerspective(ref_image, H, (width * len(images), height), cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
         cv2.imwrite('warped_img_%d_%d.jpg'%(i,j),warped_img)
         
         # 5. Composite them
-        expanded_image = cv2.copyMakeBorder(ref_img, 0, 0, 0, width * (len(images) - 1), cv2.BORDER_CONSTANT)
-        composed_img = compose(warped_img, expanded_image)
+        expanded_image = cv2.copyMakeBorder(target_image, 0, 0, 0, width * (len(images) - 1), cv2.BORDER_CONSTANT)
+        composed_img = compose(warped_img, expanded_image, 30)
         
-        im_mask_zero = np.zeros_like(ref_img)
-        im_mask_one = np.full_like(ref_img, 255)
+        im_mask_zero = np.zeros_like(target_image)
+        im_mask_one = np.full_like(target_image, 255)
         im_mask = np.hstack([im_mask_one, im_mask_zero])
-        center = (ref_img.shape[1]//2, ref_img.shape[0]//2)
+        center = (target_image.shape[1]//2, target_image.shape[0]//2)
         im_clone = cv2.seamlessClone(expanded_image, warped_img, im_mask, center, cv2.MIXED_CLONE)
         
-        cv2.imwrite('ref_img.jpg',images[i])
-        cv2.imwrite('target_img.jpg',images[j])
-        cv2.imwrite('composed_img_%d_%d.jpg'%(i,j),composed_img)
-        cv2.imwrite('im_clone%d_%d.jpg'%(i,j),im_clone)
+        cv2.imwrite('composed_img_%d.jpg'%j,composed_img)
+        cv2.imwrite('im_clone%d.jpg'%j,im_clone)
         
-        ref_img = composed_img
+        target_image = composed_img
         
-    cv2.imwrite('../images/output/2_composed_img%d.jpg'%random.randint(0,100),ref_img)
+        cv2.imwrite('../images/output/6_composed_img.jpg',composed_img)
 
-panorama('../images/input/2/')
-panorama('../images/input/4/')
+# files = os.listdir('../images/input/5/')
+# files.sort()
+# for file in files:
+#     from PIL import Image
+ 
+#     image1 = Image.open('../images/input/5/' + file)
+#     #이미지의 크기 출력
+#     w, h = image1.size
+#     # 이미지 자르기 crop함수 이용 ex. crop(left,up, rigth, down)
+#     croppedImage=image1.crop((0,300,w,h-300))
+    
+#     croppedImage.show()
+#     print("잘려진 사진 크기 :",croppedImage.size)
+    
+#     croppedImage.save('../images/input/5/' + file)
+
+panorama('../images/input/6/')
