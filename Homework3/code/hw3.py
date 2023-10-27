@@ -125,6 +125,9 @@ def panorama(folder_path):
     #     # break
 
     target_image = images[0] # queryImage
+    height, width, _ = target_image.shape
+    target_image = cv2.copyMakeBorder(target_image, height, height, width, width, cv2.BORDER_CONSTANT)
+
     for j in range(1, len(images)):
         # Feature matching
         # 1. Given N input images, set one image as a reference
@@ -133,14 +136,11 @@ def panorama(folder_path):
         # 2. Detect feature points from images and correspondences between pairs of images
         target_kp, target_des = featureExtract(target_image)
         ref_kp, ref_des = featureExtract(ref_image)
-        height, width, _ = ref_image.shape
 
         pairs = []
         matcher = cv2.BFMatcher(cv2.NORM_L1, crossCheck=True)
         matches = matcher.match(ref_des, target_des)
         matches = sorted(matches, key = lambda x:x.distance)
-        #   res = cv2.drawMatches(ref_image, ref_kp, target_image,target_kp, matches[:500], None)
-        #   cv2.imwrite('matching_%d_%d.jpg'%(i,j), res)
         
         for match in matches:
             idx_i = match.queryIdx
@@ -152,40 +152,15 @@ def panorama(folder_path):
         if H is None: continue
         
         # 4. Warp the images to the reference image
-        warped_img = cv2.warpPerspective(ref_image, H, (width * len(images), height), cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        warped_img = cv2.warpPerspective(ref_image, H, (target_image.shape[1], target_image.shape[0]), cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+
         cv2.imwrite('warped_img_%d_%d.jpg'%(i,j),warped_img)
-        
         # 5. Composite them
-        expanded_image = cv2.copyMakeBorder(target_image, 0, 0, 0, width * (len(images) - 1), cv2.BORDER_CONSTANT)
-        composed_img = compose(warped_img, expanded_image, 30)
-        
-        im_mask_zero = np.zeros_like(target_image)
-        im_mask_one = np.full_like(target_image, 255)
-        im_mask = np.hstack([im_mask_one, im_mask_zero])
-        center = (target_image.shape[1]//2, target_image.shape[0]//2)
-        im_clone = cv2.seamlessClone(expanded_image, warped_img, im_mask, center, cv2.MIXED_CLONE)
+        composed_img = compose(warped_img, target_image, 30)
         
         cv2.imwrite('composed_img_%d.jpg'%j,composed_img)
-        cv2.imwrite('im_clone%d.jpg'%j,im_clone)
-        
         target_image = composed_img
-        
-        cv2.imwrite('../images/output/6_composed_img.jpg',composed_img)
+        cv2.imwrite('../images/output/1_1_composed_img.jpg',composed_img)
 
-# files = os.listdir('../images/input/5/')
-# files.sort()
-# for file in files:
-#     from PIL import Image
- 
-#     image1 = Image.open('../images/input/5/' + file)
-#     #이미지의 크기 출력
-#     w, h = image1.size
-#     # 이미지 자르기 crop함수 이용 ex. crop(left,up, rigth, down)
-#     croppedImage=image1.crop((0,300,w,h-300))
-    
-#     croppedImage.show()
-#     print("잘려진 사진 크기 :",croppedImage.size)
-    
-#     croppedImage.save('../images/input/5/' + file)
 
-panorama('../images/input/6/')
+panorama('../images/input/1/')
