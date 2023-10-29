@@ -28,47 +28,40 @@ def SSD(pair1, pair2):
 def RANSAC(pairs, threshold):
     # Randomly select one pair in ref
     np.printoptions(precision=2, suppress=True, threshold=5)
-    # pair_ref = pairs[random.randint(0, len(pairs)-1)]
     # find largest inlier pair set
     inliers = []
-    for _ in range(len(pairs) * 100):
+    for _ in range(len(pairs)):
         pair_set = [pairs[random.randint(0, len(pairs)-1)] for _ in range(4)]
         inliers_tmp = []
         H = homography(pair_set)
-        for pair in pair_set:
+        for pair in pairs:
             src, dst = pair
             src_v = np.array([src[0], src[1], 1])
             dst_v = np.array([dst[0], dst[1], 1])
             if SSD(dst_v, H @ src_v) < threshold:
-                inliers_tmp.append(H)
+                inliers_tmp.append(pair)
 
         if len(inliers_tmp) > len(inliers):
             inliers = copy.deepcopy(inliers_tmp)
-        if len(inliers) == 4: break
 
-    print('inliers', len(inliers))
-    if len(inliers) == 0:
-        return None
     # calculate average H
-    avg_h = np.zeros_like(inliers[0])
-    for h in inliers:
-        avg_h += h
-    avg_h /= len(inliers)
-    # np.linalg.lstsq(np.vstack(inliers).T)
-    return avg_h
+    S = np.array([[src[0], src[1], 1] for src, _ in inliers])
+    D = np.array([[dst[0], dst[1], 1] for _, dst in inliers])
+
+    return np.linalg.lstsq(S, D, rcond=None)[0].transpose()
 
 def featureExtract(img):
     gray= cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
     kp, des = sift.detectAndCompute(gray,None)
     return kp, des
 
-def compose(warped, target, scaleFactor, dir):
-    composed_img = target.copy()
-    height, width, _ = target.shape
+def compose(warped, reference, scaleFactor, dir):
+    composed_img = reference.copy()
+    height, width, _ = reference.shape
 
     # find edge
     edge_w = []
-    edge_t = []
+    edge_r = []
 
     w_mid = width // 2
     if dir == 1:
@@ -84,11 +77,11 @@ def compose(warped, target, scaleFactor, dir):
         # target image, right edge
         for y in range(height):
             for x in range(w_mid, width):
-                is_edge = (sum(target[y][x]) == 0)
+                is_edge = (sum(reference[y][x]) == 0)
                 if is_edge:
-                    edge_t.append(x)
+                    edge_r.append(x)
                     break
-                if x == width - 1: edge_t.append(x)
+                if x == width - 1: edge_r.append(x)
     else:
         # warped image, right edge
         for y in range(height):
@@ -105,19 +98,19 @@ def compose(warped, target, scaleFactor, dir):
         # target image, left edge
         for y in range(height):
             for x in range(w_mid):
-                is_edge = (sum(target[y][x]) == 0)
+                is_edge = (sum(reference[y][x]) == 0)
                 if is_edge:
-                    edge_t.append(x)
+                    edge_r.append(x)
                     break
-                if x == width - 1: edge_t.append(x)
+                if x == width - 1: edge_r.append(x)
             
     for y in range(height):
         for x in range(width):
-            if sum(warped[y][x]) != 0 and sum(target[y][x]) != 0:
+            if sum(warped[y][x]) != 0 and (sum(reference[y][x]) != 0):
                 b_a, g_a, r_a = warped[y][x].astype('int')
-                b_b, g_b, r_b = target[y][x].astype('int')
+                b_b, g_b, r_b = reference[y][x].astype('int')
                 diff1 = abs(edge_w[y] - x)
-                diff2 = abs(edge_t[y] - x)
+                diff2 = abs(edge_r[y] - x)
 
                 p = (diff1 / (diff1 + diff2)) * scaleFactor
                 p = min(max(p, 0), 1)
@@ -126,58 +119,88 @@ def compose(warped, target, scaleFactor, dir):
                 r = r_a * p + r_b * (1-p)
                 composed_img[y][x] = [b, g, r]
             else:
-                composed_img[y][x] = (warped[y][x] + target[y][x])
+                composed_img[y][x] = (warped[y][x] + reference[y][x])
 
     return composed_img
+
+
+def postprocessing(img, lu, ld, ru, rd):
+    lu = (int(lu[0] / lu[2]), int(lu[1] / lu[2]))
+    ld = (int(ld[0] / ld[2]), int(ld[1] / ld[2]))
+    ru = (int(ru[0] / ru[2]), int(ru[1] / ru[2]))
+    rd = (int(rd[0] / rd[2]), int(rd[1] / rd[2]))
+
+    img_height = ld[1] - lu[1] 
+    img_width = ru[0] - lu[0] 
+    src_points = np.float32([lu, ld, ru, rd])
+    dst_points = np.float32([(0,0),(0,img_height),(img_width,0),(img_width,img_height)])
+    T = cv2.getPerspectiveTransform(src_points, dst_points)
+    dst = cv2.warpPerspective(img, T, (img_width,img_height))
+    return dst
 
 def panorama(folder_path):
     images = []
     files = os.listdir(folder_path)
     files.sort()
+
+    cnt = 0
     for i, file in enumerate(files):
+        if file.split('.')[1] != 'jpg': continue
+        cnt += 1
         images.append(cv2.imread(folder_path + file, cv2.IMREAD_COLOR))
 
-    mid = math.ceil(len(files) / 2)
-    target_image = images[mid] # queryImage
-    height, width, _ = target_image.shape
+    mid = math.ceil(cnt / 2) - 1
+    # 1. Given N input images, set one image as a reference
+    reference_img = images[mid]
+    height, width, _ = reference_img.shape
     pad_h = height // 4
-    pad_w = (len(files) * width) // 3
-    target_image = cv2.copyMakeBorder(target_image, pad_h, pad_h, pad_w, pad_w, cv2.BORDER_CONSTANT)
-
-    for i in range(1, mid+1):
-        for j in [-1, 1]:
-            idx = mid + i * j
-            if idx < 0 or idx >= len(files): continue
+    pad_w = (cnt * width) // 3
+    reference_img = cv2.copyMakeBorder(reference_img, pad_h, pad_h, pad_w, pad_w, cv2.BORDER_CONSTANT)
+    composed_img = None
+    lu, ld, ru, rd = None, None, None, None
+    for i in range(1, mid+2):
+        for dir in [-1, 1]:
+            idx = mid + i * dir
+            print('idx', mid, dir, idx)
+            if idx < 0 or idx >= cnt: continue
             # Feature matching
-            # 1. Given N input images, set one image as a reference
-            ref_image = images[idx] # trainImage
+            target_img = images[idx]
 
             # 2. Detect feature points from images and correspondences between pairs of images
-            target_kp, target_des = featureExtract(target_image)
-            ref_kp, ref_des = featureExtract(ref_image)
+            reference_kp, reference_des = featureExtract(reference_img)
+            target_kp, target_des = featureExtract(target_img)
 
             pairs = []
             matcher = cv2.BFMatcher(cv2.NORM_L1, crossCheck=True)
-            matches = matcher.match(ref_des, target_des)
+            matches = matcher.match(target_des, reference_des)
             matches = sorted(matches, key = lambda x:x.distance)
             
             for match in matches:
                 idx_i = match.queryIdx
                 idx_j = match.trainIdx
-                pairs.append((ref_kp[idx_i].pt, target_kp[idx_j].pt))
+                pairs.append((target_kp[idx_i].pt, reference_kp[idx_j].pt))
             
             # 3. Estimate the homographies between images using RANSAC
-            H = RANSAC(pairs, 100)
+            H = RANSAC(pairs, 10)
             if H is None: continue
 
             # 4. Warp the images to the reference image
-            warped_img = cv2.warpPerspective(ref_image, H, (target_image.shape[1], target_image.shape[0]), cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+            warped_img = cv2.warpPerspective(target_img, H, (reference_img.shape[1], reference_img.shape[0]), cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
 
             # 5. Composite them
-            composed_img = compose(warped_img, target_image, width / 50, j)
-            
-            cv2.imwrite('composed_img_%d.jpg'%i,composed_img)
-            target_image = composed_img
-            cv2.imwrite('../images/output/2_1_composed_img.jpg',composed_img)
+            if dir == -1:
+                lu = H @ np.array([0,0,1]).transpose()
+                ld = H @ np.array([0,height,1]).transpose()
 
-panorama('../images/input/2/')
+            else:
+                ru = H @ np.array([width,0,1]).transpose()
+                rd = H @ np.array([width,height,1]).transpose()
+
+            composed_img = compose(warped_img, reference_img, width / 50, dir)
+            cv2.imwrite('../images/output/composed_img_4_%d.jpg'%idx,composed_img)
+            reference_img = composed_img
+    
+    result = postprocessing(composed_img, lu, ld, ru, rd)
+    cv2.imwrite('../images/output/result_4.jpg', result)
+
+panorama('../images/input/4/')
