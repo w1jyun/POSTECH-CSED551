@@ -55,69 +55,47 @@ def featureExtract(img):
     kp, des = sift.detectAndCompute(gray,None)
     return kp, des
 
-def compose(warped, reference, scaleFactor, dir):
+def compose(warped, reference, scaleFactor, dir, lu, ld, ru, rd):
+    corner_w = [lu[-1], ld[-1], ru[-1], rd[-1]]
+
     composed_img = reference.copy()
     height, width, _ = reference.shape
+    print(corner_w)
+    
+    def distX(p, up, down):
+        d1 = abs(up[1] - p[1])
+        d2 = abs(p[1] - down[1])
+        r = d1 / (d1+d2)
+        h_x = int(r * down[0] + (1-r) * up[0])
+        return (abs(h_x - p[0]))
 
-    # find edge
-    edge_w = []
-    edge_r = []
+    def distY(p, left, right):
+        d1 = abs(left[0] - p[0])
+        d2 = abs(p[0] - right[0])
+        r = d1 / (d1+d2)
+        h_y = int(r * right[1] + (1-r) * left[1])
+        return (abs(h_y - p[1]))
+    
+    w_ = abs(corner_w[0][0]-corner_w[2][0])
+    h_ = abs(corner_w[0][1]-corner_w[1][1])
 
-    w_mid = width // 2
-    if dir == 1:
-        # warped image, left edge
-        for y in range(height):
-            for x in range(width):
-                is_edge = (sum(warped[y][x]) != 0)
-                if is_edge:
-                    edge_w.append(x)
-                    break
-                if x == width - 1: edge_w.append(x)
-
-        # target image, right edge
-        for y in range(height):
-            for x in range(w_mid, width):
-                is_edge = (sum(reference[y][x]) == 0)
-                if is_edge:
-                    edge_r.append(x)
-                    break
-                if x == width - 1: edge_r.append(x)
-    else:
-        # warped image, right edge
-        for y in range(height):
-            cnt = 0
-            for x in range(width):
-                is_black = (sum(warped[y][x]) == 0)
-                if cnt == 0 and not is_black:
-                    cnt += 1
-                if cnt == 1 and is_black:
-                    edge_w.append(x)
-                    break
-                if x == width - 1: edge_w.append(x)
-
-        # target image, left edge
-        for y in range(height):
-            for x in range(w_mid):
-                is_edge = (sum(reference[y][x]) == 0)
-                if is_edge:
-                    edge_r.append(x)
-                    break
-                if x == width - 1: edge_r.append(x)
-            
     for y in range(height):
         for x in range(width):
             if sum(warped[y][x]) != 0 and (sum(reference[y][x]) != 0):
-                b_a, g_a, r_a = warped[y][x].astype('int')
-                b_b, g_b, r_b = reference[y][x].astype('int')
-                diff1 = abs(edge_w[y] - x)
-                diff2 = abs(edge_r[y] - x)
+                b_w, g_w, r_w = warped[y][x].astype('int')
+                b_r, g_r, r_r = reference[y][x].astype('int')
+                diff_w_x = distX((x,y), corner_w[0], corner_w[1]) if dir == 1 else distX((x,y), corner_w[2], corner_w[3]) # left, right
+                diff_w_y = min(distY((x,y), corner_w[0], corner_w[2]), distY((x,y), corner_w[1], corner_w[3]))
+                p_x = (diff_w_x / w_) * scaleFactor if w_ != 0 else 0
+                p_y = (diff_w_y / h_) * scaleFactor if h_ != 0 else 0
 
-                p = (diff1 / (diff1 + diff2)) * scaleFactor
-                p = min(max(p, 0), 1)
-                b = b_a * p + b_b * (1-p)
-                g = g_a * p + g_b * (1-p)
-                r = r_a * p + r_b * (1-p)
-                composed_img[y][x] = [b, g, r]
+                p = (p_x * p_y)
+                p = max(min(p, 1), 0)
+
+                b = b_w * p + b_r * (1-p)
+                g = g_w * p + g_r * (1-p)
+                r = r_w * p + r_r * (1-p)
+                composed_img[y][x] = [b,g,r]
             else:
                 composed_img[y][x] = (warped[y][x] + reference[y][x])
 
@@ -145,7 +123,7 @@ def panorama(folder_path):
 
     cnt = 0
     for i, file in enumerate(files):
-        if file.split('.')[1] != 'jpg': continue
+        if file.split('.')[1] != 'jpeg': continue
         cnt += 1
         images.append(cv2.imread(folder_path + file, cv2.IMREAD_COLOR))
 
@@ -157,7 +135,13 @@ def panorama(folder_path):
     pad_w = (cnt * width) // 3
     reference_img = cv2.copyMakeBorder(reference_img, pad_h, pad_h, pad_w, pad_w, cv2.BORDER_CONSTANT)
     composed_img = None
-    lu, ld, ru, rd = None, None, None, None
+
+    lu, ld, ru, rd = [], [], [], []
+    lu.append(np.array([pad_w,pad_h,1]).transpose())
+    ld.append(np.array([pad_w,pad_h+height,1]).transpose())
+    ru.append(np.array([pad_w+width,pad_h,1]).transpose())
+    rd.append(np.array([pad_w+width,pad_h+height,1]).transpose())
+
     for i in range(1, mid+2):
         for dir in [-1, 1]:
             idx = mid + i * dir
@@ -169,7 +153,7 @@ def panorama(folder_path):
             # 2. Detect feature points from images and correspondences between pairs of images
             reference_kp, reference_des = featureExtract(reference_img)
             target_kp, target_des = featureExtract(target_img)
-
+            
             pairs = []
             matcher = cv2.BFMatcher(cv2.NORM_L1, crossCheck=True)
             matches = matcher.match(target_des, reference_des)
@@ -187,20 +171,27 @@ def panorama(folder_path):
             # 4. Warp the images to the reference image
             warped_img = cv2.warpPerspective(target_img, H, (reference_img.shape[1], reference_img.shape[0]), cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
 
+            lu_v = H @ np.array([0,0,1]).transpose()
+            ld_v = H @ np.array([0,height,1]).transpose()
+            ru_v = H @ np.array([width,0,1]).transpose()
+            rd_v = H @ np.array([width,height,1]).transpose()
+
+            lu.append((int(lu_v[0] / lu_v[2]), int(lu_v[1] / lu_v[2])))
+            ld.append((int(ld_v[0] / ld_v[2]), int(ld_v[1] / ld_v[2])))
+            ru.append((int(ru_v[0] / ru_v[2]), int(ru_v[1] / ru_v[2])))
+            rd.append((int(rd_v[0] / rd_v[2]), int(rd_v[1] / rd_v[2])))
+
             # 5. Composite them
-            if dir == -1:
-                lu = H @ np.array([0,0,1]).transpose()
-                ld = H @ np.array([0,height,1]).transpose()
+            composed_img = compose(warped_img, reference_img, (width+height)/300, dir, lu, ld, ru, rd)
 
-            else:
-                ru = H @ np.array([width,0,1]).transpose()
-                rd = H @ np.array([width,height,1]).transpose()
-
-            composed_img = compose(warped_img, reference_img, width / 50, dir)
-            cv2.imwrite('../images/output/composed_img_4_%d.jpg'%idx,composed_img)
+            cv2.imwrite('../images/output/composed_img_5_%d.jpg'%idx, composed_img)
             reference_img = composed_img
     
-    result = postprocessing(composed_img, lu, ld, ru, rd)
-    cv2.imwrite('../images/output/result_4.jpg', result)
+    x_min = max(min(p[0] for p in lu), min(p[0] for p in ld))
+    x_max = min(max(p[0] for p in ru), max(p[0] for p in rd))
+    y_min = max(max(p[1] for p in lu), max(p[1] for p in ru))
+    y_max = min(min(p[1] for p in ld), min(p[1] for p in rd))
+    result = composed_img[y_min:y_max, x_min:x_max]
+    cv2.imwrite('../images/output/result_5.jpg', result)
 
-panorama('../images/input/4/')
+panorama('../images/input/5/')
