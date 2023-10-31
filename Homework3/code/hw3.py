@@ -101,21 +101,6 @@ def compose(warped, reference, scaleFactor, dir, lu, ld, ru, rd):
 
     return composed_img
 
-
-def postprocessing(img, lu, ld, ru, rd):
-    lu = (int(lu[0] / lu[2]), int(lu[1] / lu[2]))
-    ld = (int(ld[0] / ld[2]), int(ld[1] / ld[2]))
-    ru = (int(ru[0] / ru[2]), int(ru[1] / ru[2]))
-    rd = (int(rd[0] / rd[2]), int(rd[1] / rd[2]))
-
-    img_height = ld[1] - lu[1] 
-    img_width = ru[0] - lu[0] 
-    src_points = np.float32([lu, ld, ru, rd])
-    dst_points = np.float32([(0,0),(0,img_height),(img_width,0),(img_width,img_height)])
-    T = cv2.getPerspectiveTransform(src_points, dst_points)
-    dst = cv2.warpPerspective(img, T, (img_width,img_height))
-    return dst
-
 def panorama(folder_path):
     images = []
     files = os.listdir(folder_path)
