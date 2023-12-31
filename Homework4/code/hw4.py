@@ -1,8 +1,6 @@
 import sys
 import cv2
 import numpy as np
-from PIL import Image
-from PIL.TiffTags import TAGS
 import exifread
 
 # White balance
@@ -11,7 +9,6 @@ def white_balance(img, cfa_type):
     b = []
     g = []
     r = []
-    # RGGB / GBRG / GRBG / RGGB
     for h in range(H):
         for w in range(W):
             idx = (h % 2) * 2 + w % 2
@@ -28,16 +25,15 @@ def white_balance(img, cfa_type):
 
     r_coeff = g_avg / r_avg
     b_coeff = g_avg / b_avg
-    print(r_coeff, b_coeff)
     balanced_img = img.copy()
     for h in range(H):
         for w in range(W):
             idx = (h % 2) * 2 + w % 2
             if cfa_type[idx] == 'R':
-                balanced_img[h][w] = min(balanced_img[h][w] * r_coeff, 1.0)
+                balanced_img[h][w] = balanced_img[h][w] * r_coeff
             elif cfa_type[idx] == 'B':
                 balanced_img[h][w] = balanced_img[h][w] * b_coeff
-
+    balanced_img = np.clip(balanced_img, 0, 1)
     return balanced_img
 
 # CFA interpolation
@@ -80,7 +76,6 @@ def interpolation(img, cfa_type):
         if not isOut(h,w+1): values.append(img[h][w+1])
         return np.mean(values)
     
-
     for h in range(H):
         for w in range(W):
             idx = (h % 2) * 2 + w % 2
@@ -90,9 +85,15 @@ def interpolation(img, cfa_type):
                 b = get_x(h,w)
                 interpolated_img[h][w] = [b,g,r]
             elif cfa_type[idx] == 'G':
-                r = get_w(h,w)
+                w_val = get_w(h,w)
+                h_val = get_h(h,w)
+                if idx % 2 == 0:
+                    b = w_val if cfa_type[idx + 1] == 'B' else h_val
+                    r = h_val if cfa_type[idx + 1] == 'B' else w_val     
+                else:
+                    b = w_val if cfa_type[idx - 1] == 'B' else h_val
+                    r = h_val if cfa_type[idx - 1] == 'B' else w_val  
                 g = img[h][w]
-                b = get_h(h,w)
                 interpolated_img[h][w] = [b,g,r]
             elif cfa_type[idx] == 'B':
                 r = get_x(h,w)
@@ -100,41 +101,70 @@ def interpolation(img, cfa_type):
                 b = img[h][w]
                 interpolated_img[h][w] = [b,g,r]
 
+    interpolated_img = np.clip(interpolated_img, 0, 1)
     return interpolated_img
 
+
+def contrast(img, magnitude):
+    img = img / 255.0
+    img = np.clip(img - magnitude * np.sin(2*(np.pi)*img) / (4 * np.pi), 0, 1)
+    img = (img * 255).astype(np.uint8)
+    return img
+
+def unsharp(img, alpha):
+    ycrcb_img = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+    y = ycrcb_img[:, :, 0].astype(np.float32)
+    blurred_img = cv2.bilateralFilter(y, 9, 55, 55)
+    ycrcb_img[:, :, 0] = np.clip(y + alpha * (y - blurred_img), 0, 255).astype(np.uint8)
+    sharp_img = cv2.cvtColor(ycrcb_img, cv2.COLOR_YCrCb2BGR)
+    return sharp_img
+
+def saturation(img):
+    hsv_image = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    filter = np.full(hsv_image.shape, (0, 20, 0), dtype=np.uint8)
+    hsv_image = cv2.add(hsv_image, filter)
+    hsv_image = np.clip(hsv_image, 0, 255)
+    return cv2.cvtColor(hsv_image, cv2.COLOR_HSV2BGR)
+
 # Gamma correction
-def gamma_correction(img):
-    result_img = img ** (1 / 2.2)
+def gamma_correction(img, gamma):
+    img = img / 255.0
+    result_img = img ** (1 / gamma)
+    result_img = (result_img * 255).astype(np.uint8)
     return result_img
 
-if __name__ == '__main__':
-    tiff_path = sys.argv[1]
-    # 이미지 파일 열기
+def get_cfa_type(tiff_path):
     tags = exifread.process_file(open(tiff_path, 'rb'))
-    # 태그 출력
     metadata = {f"{tag}" : f"{value}" for tag, value in tags.items()}
     try:
-        # BGGR, RGBG, GRGB, RGGB
-        # GRBG, RGGB, BGGR, RGGB
         isVertical = metadata['Image ImageWidth'] < metadata['Image ImageLength']
         if metadata['Image Model'] == 'SM-G935L': # galaxy S7 edge
-            cfa_type = 'BGGR' if isVertical else 'GRBG'
+            return 'BGGR' if isVertical else 'GRBG'
         elif metadata['Image Model'] == 'SM-G991N': # galaxy S21
-            cfa_type = 'GRBG' if isVertical else 'BGGR'
+            return 'GRBG'
         else:
             raise Exception('Unknown Model')   
     except Exception as e:
         print('Unknown Model', e)
 
+if __name__ == '__main__':
+    tiff_path = sys.argv[1]
+    filename = tiff_path.split('.')[0]
     img = cv2.imread(tiff_path, cv2.IMREAD_UNCHANGED)
     img = img / (pow(2,16) - 1)
+    cfa_type = get_cfa_type(tiff_path)
     balanced_img = white_balance(img, cfa_type)
+    cv2.imwrite(f'../images/outputs/{filename}_balanced_img.jpg', (balanced_img * 255).astype(np.uint8), [int(cv2.IMWRITE_JPEG_QUALITY), 95])
     interpolated_img = interpolation(balanced_img, cfa_type)
-    cv2.imwrite('interpolated_img.jpg', (interpolated_img * 255).astype(np.uint8), [int(cv2.IMWRITE_JPEG_QUALITY), 95])
-
-    result_img = gamma_correction(interpolated_img)
-    filename = tiff_path.split('.')[0]
-    result_img *= 255
-    cv2.imwrite(f'{filename}.jpg', result_img.astype(np.uint8), [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    interpolated_img = (interpolated_img * 255).astype(np.uint8)
+    cv2.imwrite(f'../images/outputs/{filename}_interpolated_img.jpg', interpolated_img, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    sharp_img = unsharp(interpolated_img, 1)
+    cv2.imwrite(f'../images/outputs/{filename}_sharp_img.jpg', sharp_img, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    color_enhanced_img = saturation(sharp_img)
+    cv2.imwrite(f'../images/outputs/{filename}_color_enhanced_img.jpg', color_enhanced_img, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    result_img = gamma_correction(color_enhanced_img, 2.8)
+    cv2.imwrite(f'../images/outputs/{filename}_gamma_correction.jpg', result_img, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+    result_img = contrast(result_img, 1.8)
+    cv2.imwrite(f'../images/outputs/{filename}.jpg', result_img, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
 
     
